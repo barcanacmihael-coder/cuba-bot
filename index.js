@@ -25,6 +25,9 @@ const client = new Client({
     ]
 });
 
+// Spremnik u memoriji koji pamti tko je preuzeo koji tiket (Kanal ID -> Korisnik ID)
+const claimedTickets = new Map();
+
 // ================= === PODEŠAVANJA ====================
 const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN,
@@ -49,7 +52,6 @@ const CONFIG = {
 };
 // ======================================================
 
-// FIKSIRANO: Promijenjeno s 'ready' na 'clientReady' radi izbjegavanja deprecation upozorenja
 client.once('clientReady', () => {
     console.log(`[USPEH] Bot je online kao: ${client.user.tag}`);
 });
@@ -120,9 +122,9 @@ client.on('messageCreate', async (message) => {
 
         await message.channel.send('Tiket će biti obrisan za 5 sekundi...');
         
-        // FIKSIRANO: Sigurno brisanje kanala preko ID-a
         const channelId = message.channel.id;
         setTimeout(async () => {
+            claimedTickets.delete(channelId); // Čišćenje iz memorije
             const ch = message.guild.channels.cache.get(channelId) || await message.guild.channels.fetch(channelId).catch(() => null);
             if (ch) ch.delete().catch(() => {});
         }, 5000);
@@ -231,6 +233,30 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
 
+        const channelId = interaction.channelId;
+
+        // Provjera 1: Je li već spremljeno u memoriji bota
+        if (claimedTickets.has(channelId)) {
+            const claimedByUserId = claimedTickets.get(channelId);
+            return interaction.reply({
+                content: `⚠️ Ovaj tiket je već preuzet od strane: <@${claimedByUserId}>!`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // Provjera 2: Ako je bot bio restartan, provjeravamo je li dugme već onemogućeno
+        const claimButton = interaction.message.components[0]?.components.find(c => c.customId === 'claim_ticket');
+        if (claimButton && claimButton.disabled) {
+            return interaction.reply({
+                content: `⚠️ Ovaj tiket je već netko preuzeo!`,
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // Zabilježi u memoriju bota da je ovaj kanal preuzet
+        claimedTickets.set(channelId, interaction.user.id);
+
+        // Ažuriraj dugmad
         const originalRow = interaction.message.components[0];
         const updatedRow = new ActionRowBuilder();
 
@@ -251,11 +277,11 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId === 'close_ticket') {
         await interaction.reply({ content: 'Tiket će biti obrisan za 5 sekundi...' });
         
-        // FIKSIRANO: Sigurno brisanje kanala preko ID-a
         const channelId = interaction.channelId;
         const guild = interaction.guild;
 
         setTimeout(async () => {
+            claimedTickets.delete(channelId); // Čišćenje iz memorije
             const ch = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
             if (ch) ch.delete().catch(() => {});
         }, 5000);
