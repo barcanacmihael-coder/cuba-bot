@@ -1,290 +1,255 @@
-require('dotenv').config();
+const express = require('express');
+const app = express();
 
-const {
-    Client,
-    GatewayIntentBits,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    EmbedBuilder,
-    SlashCommandBuilder,
-    REST,
-    Routes
+app.get('/', (req, res) => res.send('Bot je aktivan!'));
+app.listen(process.env.PORT || 3000, () => console.log('Web server je spreman.'));
+
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    PermissionsBitField, 
+    ChannelType,
+    MessageFlags
 } = require('discord.js');
 
-const sqlite3 = require('sqlite3').verbose();
-
-const TOKEN = process.env.TOKEN;
-const CLIENT_ID = '1503768728503058593';
-const OWNER_ID = '1271802666044887154';
-
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-const db = new sqlite3.Database('./duty.db');
+// ================= === PODEŠAVANJA ====================
+const CONFIG = {
+    TOKEN: process.env.DISCORD_TOKEN,
+    WELCOME_CHANNEL_ID: '1534981849775079435',
+    RULES_CHANNEL_ID: '1534981980679180300',
+    DONATIONS_CHANNEL_ID: '1534972479687364688',
+    TICKET_PANEL_CHANNEL_ID: '1534983734539849950',
+    STAFF_ROLE_ID: '1534972198886969434',
+    
+    CATEGORIES: {
+        pitanja: '1534972382379249764',
+        donacije: '1534972381032874115',
+        staff: '1534972379674181834',
+        unban: '1532208430176145439',
+        org: '1534972383352328223',
+        zalbe: '1535056821088161832',
+        cheater: '1535056980690075678'
+    },
+    
+    THUMBNAIL_URL: 'https://i.imgur.com/iswtxsc.png', 
+    TICKET_IMAGE_URL: 'https://imgur.com/FOJT2Yo.png'
+};
+// ======================================================
 
-// ====================== DATABASE ======================
-db.run(`
-    CREATE TABLE IF NOT EXISTS duties (
-        userId TEXT PRIMARY KEY,
-        username TEXT,
-        totalTime INTEGER DEFAULT 0,
-        startTime INTEGER DEFAULT 0,
-        onDuty INTEGER DEFAULT 0
-    )
-`);
-
-db.run(`
-    CREATE TABLE IF NOT EXISTS permissions (
-        userId TEXT PRIMARY KEY,
-        username TEXT,
-        canWarn INTEGER DEFAULT 0
-    )
-`);
-
-// ====================== READY ======================
 client.once('ready', () => {
-    console.log(`✅ Ulogovan kao ${client.user.tag}`);
+    console.log(`[USPEH] Bot je online kao: ${client.user.tag}`);
 });
 
-// ====================== FORMAT TIME ======================
-function formatTime(seconds) {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h}h ${m}m ${s}s`;
-}
+// 1. WELCOME PORUKA
+client.on('guildMemberAdd', async (member) => {
+    const channel = member.guild.channels.cache.get(CONFIG.WELCOME_CHANNEL_ID);
+    if (!channel) return;
 
-// ====================== INTERACTIONS ======================
-client.on('interactionCreate', async interaction => {
+    const welcomeEmbed = new EmbedBuilder()
+        .setColor('#00FFFF')
+        .setThumbnail(CONFIG.THUMBNAIL_URL)
+        .addFields(
+            { name: 'Cuba Roleplay', value: `Dobrodošao/la, ${member}, na Cuba Roleplay! Nadamo se da ćeš uživati.` },
+            { name: 'Pravila', value: `Sva pravila možete pronaći u kanalu <#${CONFIG.RULES_CHANNEL_ID}>` },
+            { name: 'Donacije', value: `Više informacija o donacijama imate u kanalu <#${CONFIG.DONATIONS_CHANNEL_ID}>` },
+            { name: 'TICKET', value: `Za bilo kakvu pomoć ili pitanje možete otvoriti ticket u kanalu <#${CONFIG.TICKET_PANEL_CHANNEL_ID}>` }
+        )
+        .setFooter({ text: 'Cuba Roleplay Team' })
+        .setTimestamp();
 
-    // ==================== BUTTONS ====================
-    if (interaction.isButton()) {
-        const userId = interaction.user.id;
-        const username = interaction.user.username;
-        const now = Math.floor(Date.now() / 1000);
+    await channel.send({ embeds: [welcomeEmbed] });
+});
 
-        // START DUTY
-        if (interaction.customId === 'start_duty') {
-            db.get(`SELECT * FROM duties WHERE userId = ?`, [userId], (err, row) => {
-                if (err) return console.error(err);
+// 2. KOMANDE (!setup-ticket I !close)
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
 
-                if (!row) {
-                    db.run(`INSERT INTO duties (userId, username, startTime, onDuty) VALUES (?, ?, ?, 1)`, [userId, username, now]);
-                } else {
-                    if (row.onDuty === 1) return interaction.reply({ content: '❌ Već si na dužnosti!', ephemeral: true });
-                    db.run(`UPDATE duties SET startTime = ?, onDuty = 1, username = ? WHERE userId = ?`, [now, username, userId]);
-                }
+    if (message.content === '!setup-ticket') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
 
-                const embed = new EmbedBuilder()
-                    .setColor(0x00ff00)
-                    .setTitle('🟢 ULAZAK NA DUŽNOST')
-                    .setDescription(`**${username}** je ušao na dužnost.`);
+        const ticketPanelEmbed = new EmbedBuilder()
+            .setColor('#1E1E1E')
+            .setTitle('🎟️ CUBA ROLEPLAY - TICKET SISTEM')
+            .setDescription(
+                'Klikni na dugme ispod da otvoriš ticket:\n\n' +
+                '❓ **Pitanja**\n' +
+                '💸 **Donacije**\n' +
+                '🛡️ **Prijava za staff**\n' +
+                '🔨 **Unban**\n' +
+                '👑 **Prijava za Org**\n' +
+                '🚩 **Žalbe**\n' +
+                '🚫 **Prijava Cheatera**'
+            )
+            .setImage(CONFIG.TICKET_IMAGE_URL);
 
-                interaction.reply({ embeds: [embed] });
-            });
-        }
+        const row1 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ticket_pitanja').setLabel('Pitanja').setEmoji('❓').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('ticket_donacije').setLabel('Donacije').setEmoji('💸').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('ticket_staff').setLabel('Prijava za staff').setEmoji('🛡️').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('ticket_unban').setLabel('Unban').setEmoji('🔨').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('ticket_org').setLabel('Prijava za Org').setEmoji('👑').setStyle(ButtonStyle.Primary)
+        );
 
-        // END DUTY
-        if (interaction.customId === 'end_duty') {
-            db.get(`SELECT * FROM duties WHERE userId = ?`, [userId], (err, row) => {
-                if (err) return console.error(err);
-                if (!row || row.onDuty === 0) return interaction.reply({ content: '❌ Nisi na dužnosti!', ephemeral: true });
+        const row2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ticket_zalbe').setLabel('Žalbe').setEmoji('🚩').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('ticket_cheater').setLabel('Prijava Cheatera').setEmoji('🚫').setStyle(ButtonStyle.Danger)
+        );
 
-                const session = now - row.startTime;
-                const newTotal = row.totalTime + session;
-
-                db.run(`UPDATE duties SET totalTime = ?, onDuty = 0 WHERE userId = ?`, [newTotal, userId]);
-
-                const embed = new EmbedBuilder()
-                    .setColor(0xff0000)
-                    .setTitle('🔴 IZLAZAK SA DUŽNOSTI')
-                    .setDescription(`**${username}** je izašao sa dužnosti.\n⏱️ Vrijeme: ${formatTime(session)}`);
-
-                interaction.reply({ embeds: [embed] });
-            });
-        }
+        await message.channel.send({ embeds: [ticketPanelEmbed], components: [row1, row2] });
+        message.delete().catch(() => {});
     }
 
-    // ==================== SLASH COMMANDS ====================
-    if (interaction.isChatInputCommand()) {
-
-        // /poruka
-        if (interaction.commandName === 'poruka') {
-            if (interaction.user.id !== OWNER_ID) return interaction.reply({ content: '❌ Nemaš permisiju.', ephemeral: true });
-
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('start_duty').setLabel('Uđi na dužnost').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId('end_duty').setLabel('Izađi sa dužnosti').setStyle(ButtonStyle.Danger)
-            );
-
-            const embed = new EmbedBuilder()
-                .setColor(0x3498db)
-                .setTitle('👮 SISTEM DUŽNOSTI')
-                .setDescription('Klikni dugme ispod da započneš ili završiš dužnost.');
-
-            return interaction.reply({ embeds: [embed], components: [row] });
+    if (message.content === '!close') {
+        if (!message.member.roles.cache.has(CONFIG.STAFF_ROLE_ID) && !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('Samo članovi Staff tima mogu zatvoriti tiket!');
         }
 
-        // /scoreboard
-        if (interaction.commandName === 'scoreboard') {
-            db.all(`SELECT * FROM duties ORDER BY totalTime DESC LIMIT 10`, [], (err, rows) => {
-                let desc = 'Nema podataka.';
-                if (rows && rows.length > 0) {
-                    desc = rows.map((r, i) => `#${i+1} - ${r.username} • ${formatTime(r.totalTime)}`).join('\n');
-                }
-                const embed = new EmbedBuilder()
-                    .setColor(0xFFD700)
-                    .setTitle('🏆 TOP 10 AKTIVNIH')
-                    .setDescription(desc);
-                interaction.reply({ embeds: [embed] });
-            });
-        }
-
-        // /dodajsate
-        if (interaction.commandName === 'dodajsate') {
-            if (interaction.user.id !== OWNER_ID) return interaction.reply({ content: '❌ Samo vlasnik može koristiti ovu komandu.', ephemeral: true });
-
-            const target = interaction.options.getUser('korisnik');
-            const sati = interaction.options.getInteger('sati');
-            const minute = interaction.options.getInteger('minute') || 0;
-            const secondsToAdd = (sati * 3600) + (minute * 60);
-
-            db.get(`SELECT totalTime FROM duties WHERE userId = ?`, [target.id], (err, row) => {
-                const current = row ? row.totalTime : 0;
-                const newTotal = current + secondsToAdd;
-
-                db.run(`INSERT INTO duties (userId, username, totalTime) VALUES (?, ?, ?) 
-                        ON CONFLICT(userId) DO UPDATE SET totalTime = ?, username = ?`,
-                    [target.id, target.username, newTotal, newTotal, target.username]);
-
-                const embed = new EmbedBuilder()
-                    .setColor(0x00FF00)
-                    .setTitle('⏫ Sati dodani')
-                    .setDescription(`**${target.username}** je dobio sate.\n**Dodano:** ${sati}h ${minute}m\n**Ukupno:** ${formatTime(newTotal)}`);
-
-                interaction.reply({ embeds: [embed] });
-            });
-        }
-
-        // /skinisate
-        if (interaction.commandName === 'skinisate') {
-            if (interaction.user.id !== OWNER_ID) return interaction.reply({ content: '❌ Samo vlasnik može koristiti ovu komandu.', ephemeral: true });
-
-            const target = interaction.options.getUser('korisnik');
-            const sati = interaction.options.getInteger('sati');
-            const minute = interaction.options.getInteger('minute') || 0;
-            const secondsToRemove = (sati * 3600) + (minute * 60);
-
-            db.get(`SELECT totalTime FROM duties WHERE userId = ?`, [target.id], (err, row) => {
-                const current = row ? row.totalTime : 0;
-                if (current < secondsToRemove) {
-                    return interaction.reply({ content: `❌ Korisnik ima samo ${formatTime(current)}!`, ephemeral: true });
-                }
-                const newTotal = current - secondsToRemove;
-
-                db.run(`UPDATE duties SET totalTime = ? WHERE userId = ?`, [newTotal, target.id]);
-
-                const embed = new EmbedBuilder()
-                    .setColor(0xFF0000)
-                    .setTitle('⏬ Sati skinuti')
-                    .setDescription(`**${target.username}** je ostao bez sati.\n**Skinuto:** ${sati}h ${minute}m\n**Novo ukupno:** ${formatTime(newTotal)}`);
-
-                interaction.reply({ embeds: [embed] });
-            });
-        }
-
-        // /dajpermisije
-        if (interaction.commandName === 'dajpermisije') {
-            if (interaction.user.id !== OWNER_ID) return interaction.reply({ content: '❌ Samo vlasnik.', ephemeral: true });
-
-            const target = interaction.options.getUser('korisnik');
-            db.run(`INSERT INTO permissions (userId, username, canWarn) VALUES (?, ?, 1)
-                   ON CONFLICT(userId) DO UPDATE SET canWarn = 1, username = ?`,
-                [target.id, target.username, target.username]);
-
-            interaction.reply({ content: `✅ **${target.username}** sada ima permisije za opomene.`, ephemeral: true });
-        }
-
-        // /opomena i /opomena2
-        if (interaction.commandName === 'opomena' || interaction.commandName === 'opomena2') {
-            const isPredOtkaz = interaction.commandName === 'opomena2';
-
-            const hasPerm = interaction.user.id === OWNER_ID ||
-                await new Promise(resolve => {
-                    db.get(`SELECT canWarn FROM permissions WHERE userId = ?`, [interaction.user.id], (err, row) => {
-                        resolve(row && row.canWarn === 1);
-                    });
-                });
-
-            if (!hasPerm) return interaction.reply({ content: '❌ Nemaš permisiju za slanje opomena.', ephemeral: true });
-
-            const target = interaction.options.getUser('korisnik');
-            const trajanje = interaction.options.getString('trajanje');
-            const razlog = interaction.options.getString('razlog');
-
-            const embed = new EmbedBuilder()
-                .setColor(isPredOtkaz ? 0xFF0000 : 0xFFAA00)
-                .setTitle(isPredOtkaz ? "🚨 OPOMENA PRED OTKAZ" : "⚠️ OPOMENA")
-                .setDescription(
-                    `━━━━━━━━━━━━━━━━━━\n` +
-                    `👤 **Igrač koji dobija opomenu:** ${target}\n` +
-                    `📄 **Trajanje opomene:** ${trajanje}\n` +
-                    `📝 **Razlog opomene:** ${razlog}\n` +
-                    `👮 **Tko daje opomenu:** ${interaction.user}\n` +
-                    `━━━━━━━━━━━━━━━━━━`
-                )
-                .setTimestamp();
-
-            interaction.reply({ embeds: [embed] });
-        }
+        await message.channel.send('Tiket će biti obrisan za 5 sekundi...');
+        setTimeout(() => {
+            message.channel.delete().catch(() => {});
+        }, 5000);
     }
 });
 
-// ====================== REGISTER COMMANDS ======================
-const commands = [
-    new SlashCommandBuilder().setName('poruka').setDescription('Prikaži duty panel'),
-    new SlashCommandBuilder().setName('scoreboard').setDescription('Top 10 aktivnih'),
-    new SlashCommandBuilder()
-        .setName('dodajsate')
-        .setDescription('Dodaj sate dužnosti')
-        .addUserOption(o => o.setName('korisnik').setDescription('Korisnik').setRequired(true))
-        .addIntegerOption(o => o.setName('sati').setDescription('Koliko sati').setRequired(true).setMinValue(1))
-        .addIntegerOption(o => o.setName('minute').setDescription('Koliko minuta').setRequired(false).setMinValue(0).setMaxValue(59)),
-    new SlashCommandBuilder()
-        .setName('skinisate')
-        .setDescription('Skini sate dužnosti')
-        .addUserOption(o => o.setName('korisnik').setDescription('Korisnik').setRequired(true))
-        .addIntegerOption(o => o.setName('sati').setDescription('Koliko sati').setRequired(true).setMinValue(1))
-        .addIntegerOption(o => o.setName('minute').setDescription('Koliko minuta').setRequired(false).setMinValue(0).setMaxValue(59)),
-    new SlashCommandBuilder()
-        .setName('dajpermisije')
-        .setDescription('Daj permisije za opomene')
-        .addUserOption(o => o.setName('korisnik').setDescription('Korisnik').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('opomena')
-        .setDescription('Pošalji opomenu')
-        .addUserOption(o => o.setName('korisnik').setDescription('Korisnik').setRequired(true))
-        .addStringOption(o => o.setName('trajanje').setDescription('Trajanje opomene').setRequired(true))
-        .addStringOption(o => o.setName('razlog').setDescription('Razlog').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('opomena2')
-        .setDescription('Pošalji opomenu pred otkaz')
-        .addUserOption(o => o.setName('korisnik').setDescription('Korisnik').setRequired(true))
-        .addStringOption(o => o.setName('trajanje').setDescription('Trajanje').setRequired(true))
-        .addStringOption(o => o.setName('razlog').setDescription('Razlog').setRequired(true))
-].map(c => c.toJSON());
+// 3. RUKOVANJE TIKETIMA
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
 
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+    if (interaction.customId.startsWith('ticket_')) {
+        const categoryType = interaction.customId.replace('ticket_', '');
+        
+        const categoriesData = {
+            'pitanja': { name: 'Pitanja / Pomoć', prefix: 'pitanja', catId: CONFIG.CATEGORIES.pitanja },
+            'donacije': { name: 'Donacije', prefix: 'donacije', catId: CONFIG.CATEGORIES.donacije },
+            'staff': { name: 'Prijava Za Staff', prefix: 'staff', catId: CONFIG.CATEGORIES.staff },
+            'unban': { name: 'Zahtev za unban', prefix: 'unban', catId: CONFIG.CATEGORIES.unban },
+            'org': { name: 'Prijava Org', prefix: 'prijava-org', catId: CONFIG.CATEGORIES.org },
+            'zalbe': { name: 'Žalbe', prefix: 'zalba', catId: CONFIG.CATEGORIES.zalbe },
+            'cheater': { name: 'Prijava Cheatera', prefix: 'cheater', catId: CONFIG.CATEGORIES.cheater }
+        };
 
-(async () => {
-    try {
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Slash komande registrovane.');
-    } catch (err) {
-        console.error('❌ Greška pri registraciji komandi:', err);
+        const selected = categoriesData[categoryType];
+        if (!selected) return;
+
+        const cleanUsername = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const channelName = `${selected.prefix}-${cleanUsername}`;
+
+        const existingChannel = interaction.guild.channels.cache.find(c => c.name === channelName);
+        if (existingChannel) {
+            return interaction.reply({ 
+                content: `Već imate otvoren ticket u kategoriji **${selected.name}**: ${existingChannel}`, 
+                flags: MessageFlags.Ephemeral 
+            });
+        }
+
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        const targetCategory = interaction.guild.channels.cache.get(selected.catId);
+
+        const ticketChannel = await interaction.guild.channels.create({
+            name: channelName,
+            type: ChannelType.GuildText,
+            parent: targetCategory ? targetCategory.id : null,
+            permissionOverwrites: [
+                {
+                    id: interaction.guild.id,
+                    deny: [PermissionsBitField.Flags.ViewChannel]
+                },
+                {
+                    id: interaction.user.id,
+                    allow: [
+                        PermissionsBitField.Flags.ViewChannel, 
+                        PermissionsBitField.Flags.SendMessages, 
+                        PermissionsBitField.Flags.AttachFiles,
+                        PermissionsBitField.Flags.ReadMessageHistory
+                    ]
+                },
+                {
+                    id: CONFIG.STAFF_ROLE_ID,
+                    allow: [
+                        PermissionsBitField.Flags.ViewChannel, 
+                        PermissionsBitField.Flags.SendMessages, 
+                        PermissionsBitField.Flags.AttachFiles,
+                        PermissionsBitField.Flags.ReadMessageHistory
+                    ]
+                }
+            ]
+        });
+
+        const ticketEmbed = new EmbedBuilder()
+            .setColor('#00FFFF')
+            .setTitle(`🎟️ Tiket - ${selected.name}`)
+            .setDescription(`Zdravo ${interaction.user} !\n\nStaff tim će ti odgovoriti uskoro.\nKoristi dugmad ispod ili komandu **!close** za upravljanje tiketom.`)
+            .setImage(CONFIG.TICKET_IMAGE_URL);
+
+        const controlButtons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('claim_ticket')
+                .setLabel('Preuzmi tiket')
+                .setEmoji('✋')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('close_ticket')
+                .setLabel('Zatvori tiket')
+                .setEmoji('🔒')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        await ticketChannel.send({ 
+            content: `<@&${CONFIG.STAFF_ROLE_ID}> | Tiket otvorio: ${interaction.user}`,
+            embeds: [ticketEmbed], 
+            components: [controlButtons] 
+        });
+
+        await interaction.editReply({ content: `Vaš ticket (${selected.name}) je uspešno otvoren: ${ticketChannel}` });
     }
-})();
 
-client.login(TOKEN);
+    // --- PREUZIMANJE TIKETA ---
+    if (interaction.customId === 'claim_ticket') {
+        if (!interaction.member.roles.cache.has(CONFIG.STAFF_ROLE_ID)) {
+            return interaction.reply({ 
+                content: 'Samo članovi Staff tima mogu preuzeti tiket!', 
+                flags: MessageFlags.Ephemeral 
+            });
+        }
+
+        // Ažuriramo dugme na poruci da postane onemogućeno (disabled)
+        const originalRow = interaction.message.components[0];
+        const updatedRow = new ActionRowBuilder();
+
+        originalRow.components.forEach(component => {
+            const button = ButtonBuilder.from(component);
+            if (button.data.custom_id === 'claim_ticket') {
+                button.setDisabled(true);
+                button.setLabel(`Preuzeo/la: ${interaction.user.username}`);
+            }
+            updatedRow.addComponents(button);
+        });
+
+        await interaction.update({ components: [updatedRow] });
+        await interaction.followUp({ content: `✋ Tiket je preuzeo/la ${interaction.user}.` });
+    }
+
+    // --- ZATVARANJE TIKETA ---
+    if (interaction.customId === 'close_ticket') {
+        await interaction.reply({ content: 'Tiket će biti obrisan za 5 sekundi...' });
+        setTimeout(() => {
+            interaction.channel.delete().catch(() => {});
+        }, 5000);
+    }
+});
+
+client.login(CONFIG.TOKEN);
