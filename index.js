@@ -49,7 +49,8 @@ const CONFIG = {
 };
 // ======================================================
 
-client.once('ready', () => {
+// FIKSIRANO: Promijenjeno s 'ready' na 'clientReady' radi izbjegavanja deprecation upozorenja
+client.once('clientReady', () => {
     console.log(`[USPEH] Bot je online kao: ${client.user.tag}`);
 });
 
@@ -70,7 +71,7 @@ client.on('guildMemberAdd', async (member) => {
         .setFooter({ text: 'Cuba Roleplay Team' })
         .setTimestamp();
 
-    await channel.send({ embeds: [welcomeEmbed] });
+    await channel.send({ embeds: [welcomeEmbed] }).catch(() => {});
 });
 
 // 2. KOMANDE (!setup-ticket I !close)
@@ -118,8 +119,12 @@ client.on('messageCreate', async (message) => {
         }
 
         await message.channel.send('Tiket će biti obrisan za 5 sekundi...');
-        setTimeout(() => {
-            message.channel.delete().catch(() => {});
+        
+        // FIKSIRANO: Sigurno brisanje kanala preko ID-a
+        const channelId = message.channel.id;
+        setTimeout(async () => {
+            const ch = message.guild.channels.cache.get(channelId) || await message.guild.channels.fetch(channelId).catch(() => null);
+            if (ch) ch.delete().catch(() => {});
         }, 5000);
     }
 });
@@ -226,7 +231,6 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
 
-        // Ažuriramo dugme na poruci da postane onemogućeno (disabled)
         const originalRow = interaction.message.components[0];
         const updatedRow = new ActionRowBuilder();
 
@@ -246,8 +250,14 @@ client.on('interactionCreate', async (interaction) => {
     // --- ZATVARANJE TIKETA ---
     if (interaction.customId === 'close_ticket') {
         await interaction.reply({ content: 'Tiket će biti obrisan za 5 sekundi...' });
-        setTimeout(() => {
-            interaction.channel.delete().catch(() => {});
+        
+        // FIKSIRANO: Sigurno brisanje kanala preko ID-a
+        const channelId = interaction.channelId;
+        const guild = interaction.guild;
+
+        setTimeout(async () => {
+            const ch = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+            if (ch) ch.delete().catch(() => {});
         }, 5000);
     }
 });
